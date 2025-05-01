@@ -1,0 +1,7 @@
+env_name: BlockStacking-v0
+ppo:
+  learning_rate: 3e-4
+  epochs: 10
+  gamma: 0.99
+  lam: 0.95
+reward_model_path: trained_reward_model.pt

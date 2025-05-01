@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.pt
+data/preferences.json
+data/trajectories/
+data/clips/
