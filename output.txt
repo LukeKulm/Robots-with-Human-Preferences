@@ -1,0 +1,660 @@
+
+==> agents/ppo.py <==
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.distributions import Normal
+import numpy as np
+
+class PPOAgent(nn.Module):
+    def __init__(self, obs_dim, act_dim, hidden_dim=64):
+        super(PPOAgent, self).__init__()
+        
+        # Actor network (policy)
+        self.actor = nn.Sequential(
+            nn.Linear(obs_dim, hidden_dim),
+            nn.Tanh(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.Tanh()
+        )
+        self.mean_head = nn.Linear(hidden_dim, act_dim)
+        self.log_std = nn.Parameter(torch.zeros(act_dim))
+        
+        # Critic network (value function)
+        self.critic = nn.Sequential(
+            nn.Linear(obs_dim, hidden_dim),
+            nn.Tanh(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.Tanh(),
+            nn.Linear(hidden_dim, 1)
+        )
+        
+    def get_action(self, obs, deterministic=False):
+        with torch.no_grad():
+            mean = self.actor(obs)
+            mean = self.mean_head(mean)
+            
+            if deterministic:
+                return mean
+            
+            std = self.log_std.exp()
+            dist = Normal(mean, std)
+            action = dist.sample()
+            return action
+    
+    def evaluate_actions(self, obs, actions):
+        mean = self.actor(obs)
+        mean = self.mean_head(mean)
+        std = self.log_std.exp()
+        
+        dist = Normal(mean, std)
+        log_probs = dist.log_prob(actions).sum(-1)
+        entropy = dist.entropy().mean()
+        
+        values = self.critic(obs).squeeze(-1)
+        return log_probs, values, entropy
+
+class PPOTrainer:
+    def __init__(self, agent, env, reward_model=None, learning_rate=3e-4, clip_param=0.2,
+                 value_loss_coef=0.5, entropy_coef=0.01, max_grad_norm=0.5):
+        self.agent = agent
+        self.env = env
+        self.reward_model = reward_model
+        self.optimizer = torch.optim.Adam(agent.parameters(), lr=learning_rate)
+        
+        self.clip_param = clip_param
+        self.value_loss_coef = value_loss_coef
+        self.entropy_coef = entropy_coef
+        self.max_grad_norm = max_grad_norm
+    
+    def collect_trajectory(self, max_steps=1000):
+        obs = self.env.reset()
+        done = False
+        trajectory = {
+            'observations': [],
+            'actions': [],
+            'rewards': [],
+            'values': [],
+            'log_probs': [],
+            'dones': []
+        }
+        
+        for _ in range(max_steps):
+            obs_tensor = torch.FloatTensor(obs)
+            with torch.no_grad():
+                action = self.agent.get_action(obs_tensor)
+                log_prob, value, _ = self.agent.evaluate_actions(obs_tensor.unsqueeze(0), 
+                                                               action.unsqueeze(0))
+            
+            next_obs, reward, done, _ = self.env.step(action.numpy())
+            
+            # If using reward model, override environment reward
+            if self.reward_model is not None:
+                with torch.no_grad():
+                    learned_reward = self.reward_model(obs_tensor.unsqueeze(0), 
+                                                     action.unsqueeze(0))
+                reward = learned_reward.item()
+            
+            trajectory['observations'].append(obs)
+            trajectory['actions'].append(action.numpy())
+            trajectory['rewards'].append(reward)
+            trajectory['values'].append(value.item())
+            trajectory['log_probs'].append(log_prob.item())
+            trajectory['dones'].append(done)
+            
+            obs = next_obs
+            if done:
+                break
+        
+        # Convert to numpy arrays
+        for k, v in trajectory.items():
+            trajectory[k] = np.array(v)
+        
+        return trajectory
+    
+    def compute_advantages(self, rewards, values, dones, gamma=0.99, lambda_=0.95):
+        advantages = np.zeros_like(rewards)
+        returns = np.zeros_like(rewards)
+        running_returns = 0
+        previous_value = 0
+        running_advs = 0
+        
+        for t in reversed(range(len(rewards))):
+            running_returns = rewards[t] + gamma * running_returns * (1 - dones[t])
+            running_tderror = rewards[t] + gamma * previous_value * (1 - dones[t]) - values[t]
+            running_advs = running_tderror + gamma * lambda_ * running_advs * (1 - dones[t])
+            
+            returns[t] = running_returns
+            advantages[t] = running_advs
+            previous_value = values[t]
+        
+        return advantages, returns
+    
+    def update(self, trajectories, epochs=10):
+        observations = np.concatenate([t['observations'] for t in trajectories])
+        actions = np.concatenate([t['actions'] for t in trajectories])
+        returns = np.concatenate([t['returns'] for t in trajectories])
+        advantages = np.concatenate([t['advantages'] for t in trajectories])
+        old_log_probs = np.concatenate([t['log_probs'] for t in trajectories])
+        
+        observations = torch.FloatTensor(observations)
+        actions = torch.FloatTensor(actions)
+        returns = torch.FloatTensor(returns)
+        advantages = torch.FloatTensor(advantages)
+        old_log_probs = torch.FloatTensor(old_log_probs)
+        
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        
+        for _ in range(epochs):
+            log_probs, values, entropy = self.agent.evaluate_actions(observations, actions)
+            ratio = torch.exp(log_probs - old_log_probs)
+            
+            # Policy loss
+            surr1 = ratio * advantages
+            surr2 = torch.clamp(ratio, 1 - self.clip_param, 1 + self.clip_param) * advantages
+            policy_loss = -torch.min(surr1, surr2).mean()
+            
+            # Value loss
+            value_loss = F.mse_loss(values, returns)
+            
+            # Total loss
+            loss = policy_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy
+            
+            self.optimizer.zero_grad()
+            loss.backward()
+            nn.utils.clip_grad_norm_(self.agent.parameters(), self.max_grad_norm)
+            self.optimizer.step()
+            
+        return policy_loss.item(), value_loss.item(), entropy.item()
+
+==> configs/block_stack.yaml <==
+env_name: BlockStacking-v0
+ppo:
+  learning_rate: 3e-4
+  epochs: 10
+  gamma: 0.99
+  lam: 0.95
+reward_model_path: trained_reward_model.pt
+
+==> environments/py_bullet_blocks.py <==
+import pybullet as p
+import pybullet_data
+import time
+import numpy as np
+import gym
+from gym import spaces
+
+class RobotArmReachEnv(gym.Env):
+    def __init__(self):
+        super(RobotArmReachEnv, self).__init__()
+        
+        # Initialize PyBullet
+        self.physics_client = p.connect(p.GUI)
+        p.setAdditionalSearchPath(pybullet_data.getDataPath())
+        p.setGravity(0, 0, -9.8)
+        
+        # Load ground plane
+        self.plane_id = p.loadURDF("plane.urdf")
+        
+        # Set up robot arm
+        robot_start_pos = [0, 0, 0]
+        robot_start_orientation = p.getQuaternionFromEuler([0, 0, 0])
+        self.robot_id = p.loadURDF("kuka_iiwa/model.urdf", robot_start_pos, robot_start_orientation, useFixedBase=True)
+        
+        # Set up target visualization (small red sphere)
+        self.target_visual_shape = p.createVisualShape(p.GEOM_SPHERE, radius=0.05, rgbaColor=[1, 0, 0, 0.7])
+        self.target_pos = None
+        self.target_id = None
+        
+        # Define action and observation spaces
+        # Action space: 7 joint positions for KUKA IIWA
+        self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(7,), dtype=np.float32)
+        
+        # Observation space: current joint positions (7) + joint velocities (7) + target position (3)
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(17,), dtype=np.float32)
+        
+        # Set up for real-time simulation
+        p.setRealTimeSimulation(0)
+        
+    def reset(self):
+        # Reset joint positions to default
+        for i in range(p.getNumJoints(self.robot_id)):
+            p.resetJointState(self.robot_id, i, 0)
+        
+        # Generate new random target position
+        self.target_pos = self._generate_random_target()
+        
+        # Update target visualization
+        if self.target_id is not None:
+            p.removeBody(self.target_id)
+        self.target_id = p.createMultiBody(baseMass=0,
+                                         baseVisualShapeIndex=self.target_visual_shape,
+                                         basePosition=self.target_pos)
+        
+        return self._get_observation()
+    
+    def step(self, action):
+        # Scale actions from [-1, 1] to actual joint limits
+        scaled_action = np.array(action) * 2.9671  # KUKA joint limits
+        
+        # Apply action to each joint
+        for i in range(7):
+            p.setJointMotorControl2(bodyIndex=self.robot_id,
+                                  jointIndex=i,
+                                  controlMode=p.POSITION_CONTROL,
+                                  targetPosition=scaled_action[i],
+                                  force=500)
+        
+        # Step simulation
+        p.stepSimulation()
+        
+        # Get new observation
+        obs = self._get_observation()
+        
+        # Calculate reward
+        reward = self._compute_reward()
+        
+        # Check if done
+        done = self._is_done()
+        
+        return obs, reward, done, {}
+    
+    def _get_observation(self):
+        joint_states = []
+        for i in range(7):
+            state = p.getJointState(self.robot_id, i)
+            joint_states.extend([state[0], state[1]])  # position and velocity
+        
+        return np.array(joint_states + list(self.target_pos))
+    
+    def _compute_reward(self):
+        # Get end effector position
+        state = p.getLinkState(self.robot_id, 6)
+        end_effector_pos = state[0]
+        
+        # Calculate distance to target
+        distance = np.linalg.norm(np.array(end_effector_pos) - np.array(self.target_pos))
+        
+        # Reward is negative distance (closer is better)
+        reward = -distance
+        
+        return reward
+    
+    def _is_done(self):
+        # Get end effector position
+        state = p.getLinkState(self.robot_id, 6)
+        end_effector_pos = state[0]
+        
+        # Check if we're close enough to target
+        distance = np.linalg.norm(np.array(end_effector_pos) - np.array(self.target_pos))
+        return distance < 0.05  # 5cm threshold
+    
+    def _generate_random_target(self):
+        # Generate random target position within reasonable workspace
+        x = np.random.uniform(0.2, 0.8)
+        y = np.random.uniform(-0.3, 0.3)
+        z = np.random.uniform(0.2, 0.7)
+        return [x, y, z]
+    
+    def render(self, mode='human'):
+        pass  # PyBullet already handles rendering
+    
+    def close(self):
+        p.disconnect(self.physics_client)
+
+def main():
+    # Create and test the environment
+    env = RobotArmReachEnv()
+    obs = env.reset()
+    
+    for _ in range(1000):
+        action = env.action_space.sample()  # Random action
+        obs, reward, done, _ = env.step(action)
+        time.sleep(1./240)  # Run at 240 Hz
+        
+        if done:
+            print("Target reached!")
+            obs = env.reset()
+    
+    env.close()
+
+if __name__ == '__main__':
+    main()
+
+==> requirements.txt <==
+numpy>=1.21.0
+pybullet>=3.2.5
+gym>=0.21.0
+torch>=1.9.0
+stable-baselines3>=1.5.0
+streamlit==1.44.1
+==> reward_models/reward_predictor.py <==
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+def preference_loss(reward_pred, traj1, traj2, label):
+    """
+    reward_pred: RewardPredictor
+    traj1, traj2: dicts with 'obs' and 'act' keys, shape (B, T, dim)
+    label: tensor of 0 (prefer traj1), 1 (prefer traj2), or 0.5 (tie)
+    """
+    r1 = reward_pred(traj1['obs'], traj1['act']).sum(dim=1)  # (B, 1)
+    r2 = reward_pred(traj2['obs'], traj2['act']).sum(dim=1)  # (B, 1)
+
+    logits = torch.cat([r1, r2], dim=1)  # (B, 2)
+    probs = F.softmax(logits, dim=1)
+
+    labels = torch.zeros_like(probs)
+    labels[range(len(label)), label.long()] = 1.0
+
+    return F.binary_cross_entropy(probs, labels)
+
+
+class RewardPredictor(nn.Module):
+    def __init__(self, obs_dim, act_dim, hidden_sizes=[64, 64]):
+        super().__init__()
+        input_dim = obs_dim + act_dim
+        layers = []
+        last_size = input_dim
+        for h in hidden_sizes:
+            layers.append(nn.Linear(last_size, h))
+            layers.append(nn.ReLU())
+            last_size = h
+        layers.append(nn.Linear(last_size, 1))  # scalar reward output
+        self.model = nn.Sequential(*layers)
+
+    def forward(self, observations, actions):
+        """
+        Inputs:
+          - observations: (B, T, obs_dim)
+          - actions: (B, T, act_dim)
+        Returns:
+          - rewards: (B, T, 1)
+        """
+        x = torch.cat([observations, actions], dim=-1)  # (B, T, obs+act)
+        B, T, D = x.shape
+        x = x.view(B*T, D)
+        rewards = self.model(x)  # (B*T, 1)
+        return rewards.view(B, T, 1)
+
+
+==> scripts/visualize_trajectories.py <==
+import streamlit as st
+import os
+import json
+from glob import glob
+import random
+
+CLIP_DIR = "data/clips"
+PREFS_FILE = "data/preferences.json"
+
+def load_clips():
+    left_clips = sorted(glob(os.path.join(CLIP_DIR, "left_clip_*.mp4")))
+    right_clips = sorted(glob(os.path.join(CLIP_DIR, "right_clip_*.mp4")))
+    return list(zip(left_clips, right_clips))
+
+def load_preferences():
+    if os.path.exists(PREFS_FILE):
+        with open(PREFS_FILE, "r") as f:
+            return json.load(f)
+    return []
+
+def save_preferences(prefs):
+    with open(PREFS_FILE, "w") as f:
+        json.dump(prefs, f, indent=2)
+
+# Main UI
+st.title("Trajectory Comparison: Human Feedback")
+
+clips = load_clips()
+prefs = load_preferences()
+
+# Pick a random, unlabeled pair
+seen = {(p['left'], p['right']) for p in prefs}
+unseen = [(l, r) for l, r in clips if (l, r) not in seen]
+if not unseen:
+    st.success("All clips have been labeled!")
+    st.stop()
+
+left_path, right_path = random.choice(unseen)
+
+st.write("### Which trajectory is better?")
+cols = st.columns(2)
+
+with cols[0]:
+    st.video(left_path, format='video/mp4')
+    st.caption("Left")
+
+with cols[1]:
+    st.video(right_path, format='video/mp4')
+    st.caption("Right")
+
+choice = st.radio("Your preference", ["Left", "Right", "Tie", "Can't Tell"])
+
+if st.button("Submit"):
+    prefs.append({
+        "left": left_path,
+        "right": right_path,
+        "preference": choice
+    })
+    save_preferences(prefs)
+    st.experimental_rerun()
+
+==> training/human_feedback_collector.py <==
+import os
+import json
+import torch
+from glob import glob
+import numpy as np
+
+CLIP_DATA_DIR = "data/trajectories"
+PREFS_FILE = "data/preferences.json"
+OUTPUT_FILE = "data/reward_training_data.pt"
+
+def load_preferences():
+    with open(PREFS_FILE, "r") as f:
+        return json.load(f)
+
+def load_trajectory(path):
+    # You can customize this based on how you store observations/actions per trajectory
+    # For now assume each path like `left_clip_001.mp4` maps to `left_clip_001.npz`
+    traj_path = path.replace(".mp4", ".npz").replace("clips", "trajectories")
+    data = np.load(traj_path)
+    return {
+        "obs": torch.tensor(data["obs"], dtype=torch.float32),
+        "act": torch.tensor(data["act"], dtype=torch.float32)
+    }
+
+def main():
+    prefs = load_preferences()
+    dataset = []
+
+    for entry in prefs:
+        traj1 = load_trajectory(entry["left"])
+        traj2 = load_trajectory(entry["right"])
+        label = {"Left": 0, "Right": 1, "Tie": 0.5, "Can't Tell": 0.5}[entry["preference"]]
+        dataset.append((traj1, traj2, label))
+
+    torch.save(dataset, OUTPUT_FILE)
+    print(f"Saved {len(dataset)} trajectory preferences to {OUTPUT_FILE}")
+
+if __name__ == "__main__":
+    main()
+
+==> training/trainer.py <==
+import torch
+import torch.nn as nn
+import numpy as np
+from agents.ppo import PPOAgent, PPOTrainer
+from environments.py_bullet_blocks import RobotArmReachEnv
+from reward_models.reward_predictor import RewardPredictor
+import time
+import os
+import streamlit as st
+
+class RLHFTrainer:
+    def __init__(self, save_dir="saved_models"):
+        self.env = RobotArmReachEnv()
+        self.obs_dim = self.env.observation_space.shape[0]
+        self.act_dim = self.env.action_space.shape[0]
+        
+        # Initialize PPO agent
+        self.agent = PPOAgent(self.obs_dim, self.act_dim)
+        
+        # Initialize reward model
+        self.reward_model = RewardPredictor(self.obs_dim, self.act_dim)
+        
+        # Initialize PPO trainer
+        self.ppo_trainer = PPOTrainer(self.agent, self.env, self.reward_model)
+        
+        # Setup save directory
+        self.save_dir = save_dir
+        os.makedirs(save_dir, exist_ok=True)
+        
+        # Training buffer for preferences
+        self.preference_buffer = []
+    
+    def collect_trajectories(self, n_trajectories=2):
+        """Collect trajectories for preference learning"""
+        trajectories = []
+        for _ in range(n_trajectories):
+            traj = self.ppo_trainer.collect_trajectory()
+            trajectories.append(traj)
+        return trajectories
+    
+    def get_human_preference(self, traj1, traj2):
+        """Get human preference between two trajectories using Streamlit"""
+        st.title("Human Preference Interface")
+        
+        # Display trajectory information
+        st.write("Trajectory 1:")
+        st.write(f"Total reward: {sum(traj1['rewards']):.2f}")
+        st.write(f"Length: {len(traj1['rewards'])}")
+        
+        st.write("\nTrajectory 2:")
+        st.write(f"Total reward: {sum(traj2['rewards']):.2f}")
+        st.write(f"Length: {len(traj2['rewards'])}")
+        
+        # Get preference
+        preference = st.radio(
+            "Which trajectory was better?",
+            ["Trajectory 1", "Trajectory 2", "Equal", "Both Bad"]
+        )
+        
+        if st.button("Submit Preference"):
+            if preference == "Trajectory 1":
+                return 1
+            elif preference == "Trajectory 2":
+                return 2
+            elif preference == "Equal":
+                return 0
+            else:  # Both Bad
+                return -1
+        
+        return None
+    
+    def train_reward_model(self, n_epochs=10):
+        """Train reward model on collected preferences"""
+        if len(self.preference_buffer) == 0:
+            print("No preferences to train on!")
+            return
+        
+        optimizer = torch.optim.Adam(self.reward_model.parameters(), lr=1e-4)
+        
+        for epoch in range(n_epochs):
+            total_loss = 0
+            for traj1, traj2, pref in self.preference_buffer:
+                if pref in [-1, 0]:  # Skip if both bad or equal
+                    continue
+                    
+                # Convert trajectories to tensors
+                obs1 = torch.FloatTensor(traj1['observations'])
+                act1 = torch.FloatTensor(traj1['actions'])
+                obs2 = torch.FloatTensor(traj2['observations'])
+                act2 = torch.FloatTensor(traj2['actions'])
+                
+                # Compute rewards
+                r1 = self.reward_model(obs1, act1).sum()
+                r2 = self.reward_model(obs2, act2).sum()
+                
+                # Compute loss (higher reward for preferred trajectory)
+                if pref == 1:
+                    loss = torch.nn.functional.softplus(r2 - r1)
+                else:  # pref == 2
+                    loss = torch.nn.functional.softplus(r1 - r2)
+                
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                
+                total_loss += loss.item()
+            
+            print(f"Epoch {epoch+1}, Avg Loss: {total_loss/len(self.preference_buffer):.4f}")
+    
+    def train_step(self, n_trajectories=10, n_ppo_epochs=10):
+        """Complete training step including PPO update"""
+        # Collect trajectories
+        trajectories = []
+        for _ in range(n_trajectories):
+            traj = self.ppo_trainer.collect_trajectory()
+            
+            # Compute advantages and returns
+            advantages, returns = self.ppo_trainer.compute_advantages(
+                traj['rewards'], traj['values'], traj['dones']
+            )
+            traj['advantages'] = advantages
+            traj['returns'] = returns
+            
+            trajectories.append(traj)
+        
+        # Update PPO
+        policy_loss, value_loss, entropy = self.ppo_trainer.update(trajectories, n_ppo_epochs)
+        return policy_loss, value_loss, entropy
+    
+    def save_models(self):
+        """Save both policy and reward models"""
+        torch.save(self.agent.state_dict(), 
+                  os.path.join(self.save_dir, 'policy_model.pt'))
+        torch.save(self.reward_model.state_dict(), 
+                  os.path.join(self.save_dir, 'reward_model.pt'))
+    
+    def load_models(self):
+        """Load both policy and reward models"""
+        self.agent.load_state_dict(
+            torch.load(os.path.join(self.save_dir, 'policy_model.pt')))
+        self.reward_model.load_state_dict(
+            torch.load(os.path.join(self.save_dir, 'reward_model.pt')))
+
+def main():
+    # Initialize trainer
+    trainer = RLHFTrainer()
+    
+    # Training loop
+    n_iterations = 100
+    collect_preferences_every = 5
+    
+    for iteration in range(n_iterations):
+        print(f"\nIteration {iteration + 1}")
+        
+        # Collect human preferences periodically
+        if iteration % collect_preferences_every == 0:
+            print("Collecting human preferences...")
+            trajectories = trainer.collect_trajectories(n_trajectories=2)
+            pref = trainer.get_human_preference(trajectories[0], trajectories[1])
+            
+            if pref is not None:
+                trainer.preference_buffer.append((trajectories[0], trajectories[1], pref))
+                trainer.train_reward_model()
+        
+        # Train policy
+        policy_loss, value_loss, entropy = trainer.train_step()
+        print(f"Policy Loss: {policy_loss:.4f}, Value Loss: {value_loss:.4f}, Entropy: {entropy:.4f}")
+        
+        # Save models periodically
+        if (iteration + 1) % 10 == 0:
+            trainer.save_models()
+
+if __name__ == "__main__":
+    main()
