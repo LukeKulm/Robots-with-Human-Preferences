@@ -150,7 +150,7 @@ def main():
     trainer = RLHFTrainer()
     
     # Training loop
-    n_iterations = 100
+    n_iterations = 10 # 100
     collect_preferences_every = 5
     
     for iteration in range(n_iterations):

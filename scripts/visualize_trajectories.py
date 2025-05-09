@@ -65,5 +65,5 @@ if st.button("Submit"):
         "preference": choice
     })
     save_preferences(prefs)
-    st.experimental_rerun()
-
+    # st.experimental_rerun()
+    st.rerun()
