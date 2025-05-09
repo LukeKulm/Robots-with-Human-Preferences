@@ -1,16 +1,17 @@
-import os
 import json
 import torch
-from glob import glob
 import numpy as np
+
 
 CLIP_DATA_DIR = "data/trajectories"
 PREFS_FILE = "data/preferences.json"
 OUTPUT_FILE = "data/reward_training_data.pt"
 
+
 def load_preferences():
     with open(PREFS_FILE, "r") as f:
         return json.load(f)
+
 
 def load_trajectory(path):
     # You can customize this based on how you store observations/actions per trajectory
@@ -21,8 +22,9 @@ def load_trajectory(path):
         "obs": torch.tensor(data["obs"], dtype=torch.float32),
         "act": torch.tensor(data["act"], dtype=torch.float32)
     }
+    
 
-def main():
+def convert_preferences_to_dataset():
     prefs = load_preferences()
     dataset = []
 
@@ -33,7 +35,8 @@ def main():
         dataset.append((traj1, traj2, label))
 
     torch.save(dataset, OUTPUT_FILE)
-    print(f"Saved {len(dataset)} trajectory preferences to {OUTPUT_FILE}")
+    print(f"Saved {len(dataset)} pairs to {OUTPUT_FILE}")
+
 
 if __name__ == "__main__":
-    main()
+    convert_preferences_to_dataset()

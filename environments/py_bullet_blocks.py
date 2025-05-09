@@ -5,6 +5,8 @@ import numpy as np
 import gym
 from gym import spaces
 
+FIXED_GOAL_POS = [0.5, 0.5, 0.5]
+
 class RobotArmReachEnv(gym.Env):
     def __init__(self):
         super(RobotArmReachEnv, self).__init__()
@@ -48,7 +50,8 @@ class RobotArmReachEnv(gym.Env):
             p.resetJointState(self.robot_id, i, 0)
         
         # Generate new random target position
-        self.target_pos = self._generate_random_target()
+        # self.target_pos = self._generate_random_target()
+        self.target_pos = FIXED_GOAL_POS
         
         # Update target visualization
         if self.target_id is not None:

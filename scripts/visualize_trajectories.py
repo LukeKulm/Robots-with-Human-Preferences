@@ -39,6 +39,11 @@ prefs = load_preferences()
 seen = {(relative_path(p['left']), relative_path(p['right'])) for p in prefs}
 unseen = [(l, r) for l, r in clips if (relative_path(l), relative_path(r)) not in seen]
 
+if unseen:
+    current_pair = unseen[0]
+    iter_number = os.path.basename(current_pair[0]).split("_")[-1].replace(".mp4", "")
+    st.markdown(f"**Iteration:** {iter_number}")
+
 if not unseen:
     st.success("✅ All clips have been labeled!")
     st.stop()
