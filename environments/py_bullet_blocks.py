@@ -9,7 +9,7 @@ import os
 FIXED_GOAL_POS = [0.5, 0.5, 0.5]
 
 class RobotArmReachEnv(gym.Env):
-    def __init__(self, gui=True):
+    def __init__(self, gui=False):
         super(RobotArmReachEnv, self).__init__()
         
         # Initialize PyBullet

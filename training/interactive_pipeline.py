@@ -26,7 +26,7 @@ def calculate_baseline_reward(trajectory):
     target_pos = np.array([0.5, 0.5, 0.5])  # Example target position
     distances = []
     for obs in trajectory['observations']:
-        end_effector_pos = obs[0]  # Assuming first 3 values are end effector position
+        end_effector_pos = obs[14:17]  # Assuming first 3 values are end effector position
         distance = np.linalg.norm(end_effector_pos - target_pos)
         distances.append(distance)
     return -np.mean(distances)  # Negative because lower distance is better

@@ -76,10 +76,10 @@ class RewardPredictor(nn.Module):
         preference: 1 for traj1 preferred, 2 for traj2 preferred
         """
         # Convert to tensors
-        obs1 = torch.FloatTensor(traj1['observations']).unsqueeze(0)
-        act1 = torch.FloatTensor(traj1['actions']).unsqueeze(0)
-        obs2 = torch.FloatTensor(traj2['observations']).unsqueeze(0)
-        act2 = torch.FloatTensor(traj2['actions']).unsqueeze(0)
+        obs1 = torch.FloatTensor(traj1['obs']).unsqueeze(0)
+        act1 = torch.FloatTensor(traj1['act']).unsqueeze(0)
+        obs2 = torch.FloatTensor(traj2['obs']).unsqueeze(0)
+        act2 = torch.FloatTensor(traj2['act']).unsqueeze(0)
         
         # Compute rewards
         r1 = self(obs1, act1).sum()

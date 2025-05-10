@@ -51,10 +51,10 @@ def main():
     trainer = PPOTrainer(agent, env)
     
     # Training parameters
-    n_iterations = 200
+    n_iterations = 500
     n_trajectories_per_iter = 20
     n_ppo_epochs = 5
-    eval_every = 5
+    eval_every = 20
     
     # Training loop
     rewards_history = []
