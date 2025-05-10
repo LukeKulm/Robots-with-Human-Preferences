@@ -38,7 +38,7 @@ class RLHFTrainer:
         """Collect trajectories for preference learning"""
         trajectories = []
         for _ in range(n_trajectories):
-            traj = self.ppo_trainer.collect_trajectory()
+            traj = self.ppo_trainer.collect_trajectory(max_steps=self.env.max_episode_steps)
             trajectories.append(traj)
         return trajectories
     
@@ -78,6 +78,8 @@ class RLHFTrainer:
         if len(self.preference_buffer) == 0:
             print("No preferences to train on!")
             return
+        else:
+            print("training")
         
         optimizer = torch.optim.Adam(self.reward_model.parameters(), lr=1e-4)
         
@@ -87,11 +89,11 @@ class RLHFTrainer:
                 if pref in [-1, 0]:  # Skip if both bad or equal
                     continue
                     
-                # Convert trajectories to tensors
-                obs1 = torch.FloatTensor(traj1['observations'])
-                act1 = torch.FloatTensor(traj1['actions'])
-                obs2 = torch.FloatTensor(traj2['observations'])
-                act2 = torch.FloatTensor(traj2['actions'])
+                # Convert trajectories to tensors and reshape to (B, T, D)
+                obs1 = torch.FloatTensor(traj1['observations']).unsqueeze(0)  # Add batch dimension
+                act1 = torch.FloatTensor(traj1['actions']).unsqueeze(0)  # Add batch dimension
+                obs2 = torch.FloatTensor(traj2['observations']).unsqueeze(0)  # Add batch dimension
+                act2 = torch.FloatTensor(traj2['actions']).unsqueeze(0)  # Add batch dimension
                 
                 # Compute rewards
                 r1 = self.reward_model(obs1, act1).sum()
@@ -111,7 +113,7 @@ class RLHFTrainer:
             
             print(f"Epoch {epoch+1}, Avg Loss: {total_loss/len(self.preference_buffer):.4f}")
     
-    def train_step(self, n_trajectories=10, n_ppo_epochs=10):
+    def train_step(self, n_trajectories=20, n_ppo_epochs=5):
         """Complete training step including PPO update"""
         # Collect trajectories
         trajectories = []

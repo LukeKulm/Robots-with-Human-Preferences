@@ -1,6 +1,7 @@
 import json
 import torch
 import numpy as np
+import os
 
 
 CLIP_DATA_DIR = "data/trajectories"
@@ -9,8 +10,26 @@ OUTPUT_FILE = "data/reward_training_data.pt"
 
 
 def load_preferences():
+    # Create directory if it doesn't exist
+    os.makedirs(os.path.dirname(PREFS_FILE), exist_ok=True)
+    
+    # Create file with empty list if it doesn't exist
+    if not os.path.exists(PREFS_FILE):
+        with open(PREFS_FILE, "w") as f:
+            json.dump([], f)
+        return []
+    
+    # Read existing preferences
     with open(PREFS_FILE, "r") as f:
-        return json.load(f)
+        try:
+            prefs = json.load(f)
+            if not isinstance(prefs, list):
+                print("Warning: preferences file is not a list, initializing empty list")
+                prefs = []
+            return prefs
+        except json.JSONDecodeError:
+            print("Warning: preferences file is invalid JSON, initializing empty list")
+            return []
 
 
 def load_trajectory(path):

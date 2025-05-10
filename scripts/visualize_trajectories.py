@@ -35,40 +35,47 @@ st.title("Trajectory Comparison: Human Feedback")
 clips = load_clips()
 prefs = load_preferences()
 
-# Use relative paths for compatibility across environments
-seen = {(relative_path(p['left']), relative_path(p['right'])) for p in prefs}
-unseen = [(l, r) for l, r in clips if (relative_path(l), relative_path(r)) not in seen]
-
-if unseen:
-    current_pair = unseen[0]
-    iter_number = os.path.basename(current_pair[0]).split("_")[-1].replace(".mp4", "")
-    st.markdown(f"**Iteration:** {iter_number}")
-
-if not unseen:
-    st.success("✅ All clips have been labeled!")
-    st.stop()
-
-left_path, right_path = random.choice(unseen)
-
-st.write("### Which trajectory is better?")
-cols = st.columns(2)
-
-with cols[0]:
-    st.video(relative_path(left_path), format='video/mp4', start_time=0)
-    st.caption("Left")
-
-with cols[1]:
-    st.video(relative_path(right_path), format='video/mp4', start_time=0)
-    st.caption("Right")
-
-choice = st.radio("Your preference", ["Left", "Right", "Tie", "Can't Tell"])
-
-if st.button("Submit"):
-    prefs.append({
-        "left": relative_path(left_path),
-        "right": relative_path(right_path),
-        "preference": choice
-    })
-    save_preferences(prefs)
-    # st.experimental_rerun()
-    st.rerun()
+# Get the most recent iteration number from the clips
+if clips:
+    latest_iter = max(int(os.path.basename(l).split("_")[-1].replace(".mp4", "")) 
+                     for l, _ in clips)
+    st.markdown(f"**Current Iteration:** {latest_iter}")
+    
+    # Filter clips to only show the current iteration
+    current_clips = [(l, r) for l, r in clips 
+                    if int(os.path.basename(l).split("_")[-1].replace(".mp4", "")) == latest_iter]
+    
+    # Use relative paths for compatibility across environments
+    seen = {(relative_path(p['left']), relative_path(p['right'])) for p in prefs}
+    unseen = [(l, r) for l, r in current_clips 
+             if (relative_path(l), relative_path(r)) not in seen]
+    
+    if not unseen:
+        st.success("✅ All clips for this iteration have been labeled!")
+        st.stop()
+    
+    left_path, right_path = unseen[0]  # Show the first unlabeled pair
+    
+    st.write("### Which trajectory is better?")
+    cols = st.columns(2)
+    
+    with cols[0]:
+        st.video(relative_path(left_path), format='video/mp4', start_time=0)
+        st.caption("Left")
+    
+    with cols[1]:
+        st.video(relative_path(right_path), format='video/mp4', start_time=0)
+        st.caption("Right")
+    
+    choice = st.radio("Your preference", ["Left", "Right", "Tie", "Can't Tell"])
+    
+    if st.button("Submit"):
+        prefs.append({
+            "left": relative_path(left_path),
+            "right": relative_path(right_path),
+            "preference": choice
+        })
+        save_preferences(prefs)
+        st.rerun()
+else:
+    st.warning("No clips found. Please run the training pipeline first.")
