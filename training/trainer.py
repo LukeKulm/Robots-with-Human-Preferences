@@ -73,6 +73,23 @@ class RLHFTrainer:
         
         return None
     
+    def load_preferences_into_buffer(self, prefs_path="data/preferences.json"):
+        import json
+        from training.human_feedback_collector import load_trajectory
+        
+        if not os.path.exists(prefs_path):
+            return
+
+        with open(prefs_path, "r") as f:
+            prefs = json.load(f)
+
+        self.preference_buffer = []
+        for entry in prefs:
+            traj1 = load_trajectory(entry["left"])
+            traj2 = load_trajectory(entry["right"])
+            label = {"Left": 1, "Right": 2, "Tie": 0, "Can't Tell": 0}[entry["preference"]]
+            self.preference_buffer.append((traj1, traj2, label))
+    
     def train_reward_model(self, n_epochs=10):
         """Train reward model on collected preferences"""
         if len(self.preference_buffer) == 0:
@@ -86,24 +103,25 @@ class RLHFTrainer:
         for epoch in range(n_epochs):
             total_loss = 0
             for traj1, traj2, pref in self.preference_buffer:
-                if pref in [-1, 0]:  # Skip if both bad or equal
-                    continue
+                loss = self.reward_model.compute_loss(traj1, traj2, pref)
+                # if pref in [-1, 0]:  # Skip if both bad or equal
+                #     continue
                     
-                # Convert trajectories to tensors and reshape to (B, T, D)
-                obs1 = torch.FloatTensor(traj1['observations']).unsqueeze(0)  # Add batch dimension
-                act1 = torch.FloatTensor(traj1['actions']).unsqueeze(0)  # Add batch dimension
-                obs2 = torch.FloatTensor(traj2['observations']).unsqueeze(0)  # Add batch dimension
-                act2 = torch.FloatTensor(traj2['actions']).unsqueeze(0)  # Add batch dimension
+                # # Convert trajectories to tensors and reshape to (B, T, D)
+                # obs1 = torch.FloatTensor(traj1['obs']).unsqueeze(0)  # Add batch dimension
+                # act1 = torch.FloatTensor(traj1['act']).unsqueeze(0)  # Add batch dimension
+                # obs2 = torch.FloatTensor(traj2['obs']).unsqueeze(0)  # Add batch dimension
+                # act2 = torch.FloatTensor(traj2['act']).unsqueeze(0)  # Add batch dimension
                 
-                # Compute rewards
-                r1 = self.reward_model(obs1, act1).sum()
-                r2 = self.reward_model(obs2, act2).sum()
+                # # Compute rewards
+                # r1 = self.reward_model(obs1, act1).sum()
+                # r2 = self.reward_model(obs2, act2).sum()
                 
-                # Compute loss (higher reward for preferred trajectory)
-                if pref == 1:
-                    loss = torch.nn.functional.softplus(r2 - r1)
-                else:  # pref == 2
-                    loss = torch.nn.functional.softplus(r1 - r2)
+                # # Compute loss (higher reward for preferred trajectory)
+                # if pref == 1:
+                #     loss = torch.nn.functional.softplus(r2 - r1)
+                # else:  # pref == 2
+                #     loss = torch.nn.functional.softplus(r1 - r2)
                 
                 optimizer.zero_grad()
                 loss.backward()

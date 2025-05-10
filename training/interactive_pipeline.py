@@ -26,7 +26,7 @@ def calculate_baseline_reward(trajectory):
     target_pos = np.array([0.5, 0.5, 0.5])  # Example target position
     distances = []
     for obs in trajectory['observations']:
-        end_effector_pos = obs[:3]  # Assuming first 3 values are end effector position
+        end_effector_pos = obs[0]  # Assuming first 3 values are end effector position
         distance = np.linalg.norm(end_effector_pos - target_pos)
         distances.append(distance)
     return -np.mean(distances)  # Negative because lower distance is better
@@ -67,6 +67,7 @@ for iter in range(total_iterations):
 
         print("\n[Reward Model Training Phase]")
         convert_preferences_to_dataset()
+        trainer.load_preferences_into_buffer()
         trainer.train_reward_model()
 
     print("\n[PPO Training Phase]")
@@ -80,7 +81,7 @@ for iter in range(total_iterations):
     performance_history.append(baseline_reward)
     print(f"Current Performance (Distance to Target): {-baseline_reward:.4f}")
 
-    if (iter + 1) % 5 == 0:
+    if (iter + 1) % 1 == 0:
         trainer.save_models()
         print("\n[Model Saving] Models saved")
         

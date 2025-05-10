@@ -28,9 +28,10 @@ def calculate_true_reward(trajectory):
     target_pos = np.array([0.5, 0.5, 0.5])  # Fixed target position
     total_reward = 0
     for obs in trajectory['observations']:
+        print(obs[14:17])
         # Extract end effector position from observation
         # Last 3 values in observation are target position, so we need to get the position before that
-        end_effector_pos = obs[0]  # Assuming last 3 values before target are end effector position
+        end_effector_pos = obs[14:17]  # Assuming last 3 values before target are end effector position
         distance = np.linalg.norm(end_effector_pos - target_pos)
         total_reward -= distance  # Negative distance as reward
     return total_reward
@@ -60,9 +61,9 @@ class AutoPreferenceTrainer:
         self.reward_model = RewardPredictor(
             obs_dim=self.obs_dim,
             act_dim=self.act_dim,
-            hidden_dim=256,
-            dropout_rate=0.2,
-            l2_reg=1e-4
+            hidden_dim=64,
+            dropout_rate=0.1,
+            # l2_reg=1e-4
         )
         
         # Initialize PPO trainer
@@ -206,7 +207,8 @@ def main():
     reward_model_loss_history = []
     
     # Training parameters
-    n_iterations = 200
+    # n_iterations = 200
+    n_iterations = 100
     collect_preferences_every = 2
     n_trajectories_per_iter = 4  # Collect more trajectories for better preference learning
     

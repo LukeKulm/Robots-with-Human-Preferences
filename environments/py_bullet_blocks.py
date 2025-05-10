@@ -9,7 +9,7 @@ import os
 FIXED_GOAL_POS = [0.5, 0.5, 0.5]
 
 class RobotArmReachEnv(gym.Env):
-    def __init__(self, gui=False):
+    def __init__(self, gui=True):
         super(RobotArmReachEnv, self).__init__()
         
         # Initialize PyBullet
@@ -66,7 +66,7 @@ class RobotArmReachEnv(gym.Env):
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(7,), dtype=np.float32)
         
         # Observation space: current joint positions (7) + joint velocities (7) + target position (3)
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(17,), dtype=np.float32)
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(20,), dtype=np.float32)
         
         # Define max episode steps
         self.max_episode_steps = 50
@@ -166,15 +166,13 @@ class RobotArmReachEnv(gym.Env):
     def _get_observation(self):
         joint_states = []
         for joint_idx in self.actuated_joints:
-            try:
-                state = p.getJointState(self.robot_id, joint_idx)
-                joint_states.extend([state[0], state[1]])  # position and velocity
-            except p.error as e:
-                print(f"Warning: Failed to get joint state for joint {joint_idx}: {e}")
-                self._reload_robot()
-                raise
-        
-        return np.array(joint_states + list(self.target_pos))
+            state = p.getJointState(self.robot_id, joint_idx)
+            joint_states.extend([state[0], state[1]])  # pos, vel
+
+        # Add end effector position
+        ee_pos = p.getLinkState(self.robot_id, 7)[0]
+
+        return np.array(joint_states + list(ee_pos) + list(self.target_pos))
     
     def _compute_reward(self):
         try:

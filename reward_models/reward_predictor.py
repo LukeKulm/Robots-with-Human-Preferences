@@ -35,13 +35,9 @@ class RewardPredictor(nn.Module):
         # Simple MLP architecture using LayerNorm instead of BatchNorm
         self.model = nn.Sequential(
             nn.Linear(obs_dim + act_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
             nn.ReLU(),
-            nn.Dropout(dropout_rate),
             nn.Linear(hidden_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
             nn.ReLU(),
-            nn.Dropout(dropout_rate),
             nn.Linear(hidden_dim, 1)
         )
         
@@ -94,12 +90,9 @@ class RewardPredictor(nn.Module):
             loss = F.softplus(r2 - r1)
         else:  # preference == 2
             loss = F.softplus(r1 - r2)
-        
-        # Add L2 regularization
-        l2_loss = 0.0
-        for param in self.parameters():
-            l2_loss += torch.norm(param, p=2)
-        loss += self.l2_reg * l2_loss
+            
+        l2_reg = sum(torch.norm(p, 2) for p in self.parameters() if p.requires_grad)
+        loss += self.l2_reg * l2_reg
         
         return loss
 

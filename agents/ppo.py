@@ -53,8 +53,8 @@ class PPOAgent(nn.Module):
         return log_probs, values, entropy
 
 class PPOTrainer:
-    def __init__(self, agent, env, reward_model=None, learning_rate=3e-4, clip_param=0.2,
-                 value_loss_coef=0.5, entropy_coef=0.01, max_grad_norm=0.5):
+    def __init__(self, agent, env, reward_model=None, learning_rate=3e-4, clip_param=0.1,
+                 value_loss_coef=0.5, entropy_coef=0.001, max_grad_norm=0.5):
         self.agent = agent
         self.env = env
         self.reward_model = reward_model
