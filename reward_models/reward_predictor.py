@@ -22,7 +22,7 @@ def preference_loss(reward_pred, traj1, traj2, label):
 
 
 class RewardPredictor(nn.Module):
-    def __init__(self, obs_dim, act_dim, hidden_dim=64, dropout_rate=0.2, l2_reg=1e-4):
+    def __init__(self, obs_dim, act_dim, hidden_dim=32, dropout_rate=0.2, l2_reg=1e-4):
         super(RewardPredictor, self).__init__()
         
         # Input dimensions

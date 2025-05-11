@@ -5,6 +5,8 @@ import cv2
 import pybullet as p
 import subprocess
 from pathlib import Path
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from agents.ppo import PPOAgent
 from environments.py_bullet_blocks import RobotArmReachEnv

@@ -10,22 +10,24 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from agents.ppo import PPOAgent, PPOTrainer
 from environments.py_bullet_blocks import RobotArmReachEnv
+from environments.fixed_robot_env import LockedRobotArmReachEnv
 from reward_models.reward_predictor import RewardPredictor
 
 class RLHFTrainer:
-    def __init__(self, save_dir="saved_models"):
-        self.env = RobotArmReachEnv()
+    def __init__(self, env, ppo_trainer, save_dir="saved_models"):
+        # self.env = RobotArmReachEnv()
+        self.env = env
         self.obs_dim = self.env.observation_space.shape[0]
         self.act_dim = self.env.action_space.shape[0]
-        
-        # Initialize PPO agent
-        self.agent = PPOAgent(self.obs_dim, self.act_dim)
         
         # Initialize reward model
         self.reward_model = RewardPredictor(self.obs_dim, self.act_dim)
         
         # Initialize PPO trainer
-        self.ppo_trainer = PPOTrainer(self.agent, self.env, self.reward_model)
+        self.ppo_trainer = ppo_trainer
+        
+        # Initialize PPO agent
+        self.agent = ppo_trainer.agent
         
         # Setup save directory
         self.save_dir = save_dir
