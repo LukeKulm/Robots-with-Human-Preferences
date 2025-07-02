@@ -10,22 +10,24 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from agents.ppo import PPOAgent, PPOTrainer
 from environments.py_bullet_blocks import RobotArmReachEnv
+from environments.fixed_robot_env import LockedRobotArmReachEnv
 from reward_models.reward_predictor import RewardPredictor
 
 class RLHFTrainer:
-    def __init__(self, save_dir="saved_models"):
-        self.env = RobotArmReachEnv()
+    def __init__(self, env, ppo_trainer, save_dir="saved_models"):
+        # self.env = RobotArmReachEnv()
+        self.env = env
         self.obs_dim = self.env.observation_space.shape[0]
         self.act_dim = self.env.action_space.shape[0]
-        
-        # Initialize PPO agent
-        self.agent = PPOAgent(self.obs_dim, self.act_dim)
         
         # Initialize reward model
         self.reward_model = RewardPredictor(self.obs_dim, self.act_dim)
         
         # Initialize PPO trainer
-        self.ppo_trainer = PPOTrainer(self.agent, self.env, self.reward_model)
+        self.ppo_trainer = ppo_trainer
+        
+        # Initialize PPO agent
+        self.agent = ppo_trainer.agent
         
         # Setup save directory
         self.save_dir = save_dir
@@ -38,7 +40,7 @@ class RLHFTrainer:
         """Collect trajectories for preference learning"""
         trajectories = []
         for _ in range(n_trajectories):
-            traj = self.ppo_trainer.collect_trajectory()
+            traj = self.ppo_trainer.collect_trajectory(max_steps=self.env.max_episode_steps)
             trajectories.append(traj)
         return trajectories
     
@@ -73,35 +75,55 @@ class RLHFTrainer:
         
         return None
     
+    def load_preferences_into_buffer(self, prefs_path="data/preferences.json"):
+        import json
+        from training.human_feedback_collector import load_trajectory
+        
+        if not os.path.exists(prefs_path):
+            return
+
+        with open(prefs_path, "r") as f:
+            prefs = json.load(f)
+
+        self.preference_buffer = []
+        for entry in prefs:
+            traj1 = load_trajectory(entry["left"])
+            traj2 = load_trajectory(entry["right"])
+            label = {"Left": 1, "Right": 2, "Tie": 0, "Can't Tell": 0}[entry["preference"]]
+            self.preference_buffer.append((traj1, traj2, label))
+    
     def train_reward_model(self, n_epochs=10):
         """Train reward model on collected preferences"""
         if len(self.preference_buffer) == 0:
             print("No preferences to train on!")
             return
+        else:
+            print("training")
         
         optimizer = torch.optim.Adam(self.reward_model.parameters(), lr=1e-4)
         
         for epoch in range(n_epochs):
             total_loss = 0
             for traj1, traj2, pref in self.preference_buffer:
-                if pref in [-1, 0]:  # Skip if both bad or equal
-                    continue
+                loss = self.reward_model.compute_loss(traj1, traj2, pref)
+                # if pref in [-1, 0]:  # Skip if both bad or equal
+                #     continue
                     
-                # Convert trajectories to tensors
-                obs1 = torch.FloatTensor(traj1['observations'])
-                act1 = torch.FloatTensor(traj1['actions'])
-                obs2 = torch.FloatTensor(traj2['observations'])
-                act2 = torch.FloatTensor(traj2['actions'])
+                # # Convert trajectories to tensors and reshape to (B, T, D)
+                # obs1 = torch.FloatTensor(traj1['obs']).unsqueeze(0)  # Add batch dimension
+                # act1 = torch.FloatTensor(traj1['act']).unsqueeze(0)  # Add batch dimension
+                # obs2 = torch.FloatTensor(traj2['obs']).unsqueeze(0)  # Add batch dimension
+                # act2 = torch.FloatTensor(traj2['act']).unsqueeze(0)  # Add batch dimension
                 
-                # Compute rewards
-                r1 = self.reward_model(obs1, act1).sum()
-                r2 = self.reward_model(obs2, act2).sum()
+                # # Compute rewards
+                # r1 = self.reward_model(obs1, act1).sum()
+                # r2 = self.reward_model(obs2, act2).sum()
                 
-                # Compute loss (higher reward for preferred trajectory)
-                if pref == 1:
-                    loss = torch.nn.functional.softplus(r2 - r1)
-                else:  # pref == 2
-                    loss = torch.nn.functional.softplus(r1 - r2)
+                # # Compute loss (higher reward for preferred trajectory)
+                # if pref == 1:
+                #     loss = torch.nn.functional.softplus(r2 - r1)
+                # else:  # pref == 2
+                #     loss = torch.nn.functional.softplus(r1 - r2)
                 
                 optimizer.zero_grad()
                 loss.backward()
@@ -111,7 +133,7 @@ class RLHFTrainer:
             
             print(f"Epoch {epoch+1}, Avg Loss: {total_loss/len(self.preference_buffer):.4f}")
     
-    def train_step(self, n_trajectories=10, n_ppo_epochs=10):
+    def train_step(self, n_trajectories=20, n_ppo_epochs=5):
         """Complete training step including PPO update"""
         # Collect trajectories
         trajectories = []

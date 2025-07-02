@@ -53,8 +53,8 @@ class PPOAgent(nn.Module):
         return log_probs, values, entropy
 
 class PPOTrainer:
-    def __init__(self, agent, env, reward_model=None, learning_rate=3e-4, clip_param=0.2,
-                 value_loss_coef=0.5, entropy_coef=0.01, max_grad_norm=0.5):
+    def __init__(self, agent, env, reward_model=None, learning_rate=3e-4, clip_param=0.1,
+                 value_loss_coef=0.5, entropy_coef=0.001, max_grad_norm=0.5):
         self.agent = agent
         self.env = env
         self.reward_model = reward_model
@@ -65,7 +65,7 @@ class PPOTrainer:
         self.entropy_coef = entropy_coef
         self.max_grad_norm = max_grad_norm
     
-    def collect_trajectory(self, max_steps=1000):
+    def collect_trajectory(self, max_steps=None):
         obs = self.env.reset()
         done = False
         trajectory = {
@@ -76,6 +76,10 @@ class PPOTrainer:
             'log_probs': [],
             'dones': []
         }
+        
+        # Use environment's max_episode_steps if not specified
+        if max_steps is None:
+            max_steps = self.env.max_episode_steps
         
         for _ in range(max_steps):
             obs_tensor = torch.FloatTensor(obs)
